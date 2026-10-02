@@ -123,8 +123,13 @@ class App(BaseHTTPRequestHandler):
  def do_GET(self):
   u=urlparse(self.path);q=parse_qs(u.query,keep_blank_values=True)
   if u.path=="/health":return self.send(200,{"status":"ok"})
-  if self.headers.get("Accept","").find("text/html")>=0 and u.path in ("/","/requests","/split","/signup","/login","/authorizations") and STAGE>=2:
-   raw=html().encode();self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Content-Length",str(len(raw)));self.end_headers();self.wfile.write(raw);return
+  if STAGE>=2 and (u.path.startswith("/assets/") or (self.headers.get("Accept","").find("text/html")>=0 and u.path in ("/","/requests","/split","/signup","/login","/authorizations"))):
+   rel="index.html" if not u.path.startswith("/assets/") else u.path.lstrip("/")
+   try:
+    raw=open(os.path.join(os.path.dirname(__file__),rel),"rb").read()
+    typ="text/html; charset=utf-8" if rel=="index.html" else ("text/css; charset=utf-8" if rel.endswith(".css") else "application/javascript; charset=utf-8" if rel.endswith(".js") else "font/woff2" if rel.endswith(".woff2") else "application/octet-stream")
+    self.send_response(200);self.send_header("Content-Type",typ);self.send_header("Content-Length",str(len(raw)));self.end_headers();self.wfile.write(raw);return
+   except OSError:return self.send(*fail("not_found",404))
   with LOCK:
    if u.path=="/_test/export":return self.send(200,{"track":"pocketful","format_version":STAGE,"state":deepcopy(S)})
    uid=auth(self)

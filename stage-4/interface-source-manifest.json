@@ -1,0 +1,29 @@
+{
+  "author": "Current-chat Codex lead-pf27",
+  "generated_utc": "2026-10-02T06:09:41.395465+00:00",
+  "final_mission": "8c0a90c8-774d-45da-b7ce-f741379a462e",
+  "boundary": "Fresh interface authored during final run from supplied specs. Only openly licensed font binaries/licenses reused. No old backend/product source copied.",
+  "files": {
+    "index.html": "1e8b04008bbbd27b0ec46ffe6b0c1c341e1c2db1447c57291540d32883947f4e",
+    "assets/app.css": "f2e25597e71ba912989738e88393b63d0c9335c78d47001cb9c71c2fa4b8571a",
+    "assets/app.js": "dc98264bf3f51b6d2940c2a5f0110c85e3a5c6e1e76e48aa4047a0f5b4202885",
+    "assets/dm-sans-OFL.txt": "9af36190332437f5ecd09974de43c1f7c77a310a996cdd8ceb25628b458840e1",
+    "assets/dm-sans.woff2": "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543",
+    "assets/FONT-SOURCES.json": "ee723a49a16fd0f07c4ca560a150d129e6ddb62930b382a7579d1151ce9915ab",
+    "assets/fraunces-OFL.txt": "fcfa1cc090bc091e22db5f45230e064450892b5ba56e97b2469b55849c36f75b",
+    "assets/fraunces.woff2": "7f9d191d999336d3b9790afa72e1358e50a13b06d4f289341e92a311967a80f9"
+  },
+  "integration_and_behavior_acceptance": false,
+  "updated_utc": "2026-10-02T06:23:40.741102+00:00",
+  "development_behavior": {
+    "report": "evidence/fresh-final-interface-development-03/execution.json",
+    "actual_browser_checks": 10,
+    "actual_terminal_actions": 3,
+    "status": "PASS",
+    "backend_revision": "2e47fd709c8c5ca320403a508a846eab63ae36f9",
+    "boundary": "New final-run UI under development, exercised against old development service. No fresh final backend acceptance inferred.",
+    "final_backend_acceptance": false,
+    "fixed_ui_defect": "Insecure HTTP lacks crypto.randomUUID; use crypto.getRandomValues for retained write keys.",
+    "oracle_compatibility_fix": "Match actual activity query strings when intercepting delayed reads; all stale-read assertions preserved."
+  }
+}
