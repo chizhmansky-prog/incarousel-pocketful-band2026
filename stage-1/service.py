@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pocketful in-memory HTTP service. Stage behaviour is selected at image build time."""
 import base64, hashlib, json, os, re, secrets, threading
+from decimal import Decimal, InvalidOperation
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,15 +16,80 @@ def parse_instant(x):
     return d.astimezone(timezone.utc)
 def fail(code,status): return status,{"error":{"code":code,"message":code.replace("_"," ")}}
 def nint(x,lo=0,hi=1000000000):
-    if isinstance(x,bool) or not isinstance(x,(int,float)) or (isinstance(x,float) and (not x.is_integer() or x!=x or abs(x)==float("inf"))): raise ValueError()
-    x=int(x)
+    if isinstance(x,bool) or not isinstance(x,(int,float,Decimal)): raise ValueError()
+    try:
+        d=Decimal(str(x)) if not isinstance(x,Decimal) else x
+    except (InvalidOperation, ValueError): raise ValueError()
+    if not d.is_finite() or d != d.to_integral_value(): raise ValueError()
+    x=int(d)
     if not lo<=x<=hi: raise ValueError()
     return x
 def hpassword(p):
     return base64.b64encode(hashlib.scrypt(p.encode(),salt=b"pocketful-v1",n=2**14,r=8,p=1)).decode()
 def same_password(p,stored): return isinstance(p,str) and stored==hpassword(p)
 def ident(prefix): S["seq"]+=1; return f"{prefix}_{S['seq']}"
-def body_value(b): return json.dumps(b,sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False)
+def json_identity(x):
+    if x is None or isinstance(x,(str,bool)): return x
+    if isinstance(x,(int,float,Decimal)) and not isinstance(x,bool):
+        try: d=Decimal(str(x)) if not isinstance(x,Decimal) else x
+        except (InvalidOperation,ValueError): raise ValueError()
+        if not d.is_finite(): raise ValueError()
+        d=d.normalize()
+        return {"$number":format(d,"f") if d.adjusted() < 0 else str(d)}
+    if isinstance(x,list): return [json_identity(v) for v in x]
+    if isinstance(x,dict): return {str(k):json_identity(v) for k,v in x.items()}
+    raise ValueError()
+def body_value(b): return json.dumps(json_identity(b),sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False)
+def json_safe(x):
+    if isinstance(x,Decimal): return int(x) if x == x.to_integral_value() else float(x)
+    if isinstance(x,set): return sorted(x)
+    if isinstance(x,tuple): return [json_safe(v) for v in x]
+    if isinstance(x,list): return [json_safe(v) for v in x]
+    if isinstance(x,dict): return {str(k):json_safe(v) for k,v in x.items()}
+    return x
+def export_state():
+    state=json_safe(deepcopy(S))
+    state["idempotency"]=[{"user_id":k[0],"method":k[1],"path":k[2],"key":k[3],"identity":v[0],"response":json_safe(v[1])} for k,v in S["idempotency"].items()]
+    return state
+def decoded_number(x):
+    if isinstance(x,Decimal):
+        if not x.is_finite() or x != x.to_integral_value(): raise ValueError()
+        return int(x)
+    if isinstance(x,list): return [decoded_number(v) for v in x]
+    if isinstance(x,dict): return {k:decoded_number(v) for k,v in x.items()}
+    return x
+def import_state(raw):
+    raw=decoded_number(raw)
+    if not isinstance(raw,dict): raise ValueError()
+    required=("currency","minor_units","users","handles","tokens","idempotency","payments","requests","operators","seq")
+    if any(k not in raw for k in required) or raw.get("minor_units") not in (0,2,3): raise ValueError()
+    users=raw["users"];handles=raw["handles"];tokens=raw["tokens"]
+    if not isinstance(users,dict) or not isinstance(handles,dict) or not isinstance(tokens,dict) or not isinstance(raw["operators"],list): raise ValueError()
+    for uid,u in users.items():
+        if not isinstance(uid,str) or not isinstance(u,dict) or u.get("id")!=uid or not isinstance(u.get("password_hash"),str) or not isinstance(u.get("email"),str) or not isinstance(u.get("display_name"),str) or not isinstance(u.get("handle"),str): raise ValueError()
+        nint(u.get("total"),0,2**53)
+        if handles.get(u["handle"]) != uid: raise ValueError()
+    if any(not isinstance(k,str) or v not in users for k,v in tokens.items()): raise ValueError()
+    if any(not isinstance(v,str) or v not in users for v in raw["operators"]): raise ValueError()
+    if not isinstance(raw["payments"],list) or not isinstance(raw["requests"],list) or not isinstance(raw["idempotency"],list): raise ValueError()
+    seen=set()
+    for p in raw["payments"]:
+        if not isinstance(p,dict) or not isinstance(p.get("payment_id"),str) or p["payment_id"] in seen or p.get("from_user_id") not in users or p.get("to_user_id") not in users: raise ValueError()
+        seen.add(p["payment_id"]);nint(p.get("amount"),0);parse_instant(p.get("created_at"));
+        if p.get("visibility") not in ("public","private"): raise ValueError()
+    for r in raw["requests"]:
+        if not isinstance(r,dict) or not isinstance(r.get("request_id"),str) or r.get("requester_id") not in users or r.get("payer_id") not in users or r.get("status") not in ("pending","paid","declined","cancelled"): raise ValueError()
+        nint(r.get("amount"),0);parse_instant(r.get("created_at"))
+    idem={}
+    for item in raw["idempotency"]:
+        if not isinstance(item,dict) or not all(isinstance(item.get(k),str) for k in ("user_id","method","path","key","identity")) or item["user_id"] not in users: raise ValueError()
+        k=(item["user_id"],item["method"],item["path"],item["key"])
+        if k in idem: raise ValueError()
+        idem[k]=(item["identity"],deepcopy(item.get("response")))
+    candidate=deepcopy(raw);candidate["operators"]=set(raw["operators"]);candidate["idempotency"]=idem
+    candidate.setdefault("authorizations",[]);candidate.setdefault("revisions",{});candidate.setdefault("snapshots",{});candidate.setdefault("ttl",600);candidate.setdefault("initial",sum(u["total"] for u in users.values()))
+    if not isinstance(candidate["seq"],int) or isinstance(candidate["seq"],bool) or candidate["seq"]<0: raise ValueError()
+    return candidate
 def visible(p,u): return p["visibility"]=="public" or u in (p["from_user_id"],p["to_user_id"])
 def expire():
     if STAGE<2:return
@@ -56,7 +122,7 @@ def init(f):
         b=nint(u.get("balance"),0,2**53)
         if u["id"] in users or u["handle"] in handles: raise ValueError()
         users[u["id"]]={"id":u["id"],"email":u["email"],"password_hash":hpassword(u["password"]),"display_name":u["display_name"],"handle":u["handle"],"total":b};handles[u["handle"]]=u["id"];initial+=b
-    S={"currency":f.get("currency","EUR"),"minor_units":f["minor_units"],"users":users,"handles":handles,"tokens":{},"idempotency":{},"payments":[],"requests":[],"authorizations":[],"operators":set(f.get("settlement_operator_ids",[])),"revisions":{},"snapshots":{},"ttl":f.get("authorization_ttl_seconds",600),"seq":0,"initial":initial}
+    S={"currency":f.get("currency","EUR"),"minor_units":int(f["minor_units"]),"users":users,"handles":handles,"tokens":{},"idempotency":{},"payments":[],"requests":[],"authorizations":[],"operators":set(f.get("settlement_operator_ids",[])),"revisions":{},"snapshots":{},"ttl":f.get("authorization_ttl_seconds",600),"seq":0,"initial":initial}
     if not isinstance(S["ttl"],int) or isinstance(S["ttl"],bool) or S["ttl"]<1: raise ValueError()
     for p0 in f.get("payments",[]):
         if not isinstance(p0,dict): raise ValueError()
@@ -88,18 +154,21 @@ def idem(h,u,b):
     if len(k)>255:return None,fail("validation_failed",422)
     key=(u,h.command,urlparse(h.path).path,k); v=body_value(b); prior=S["idempotency"].get(key)
     if prior:
-        return ("replay",prior[1]),None if prior[0]==v else (None,fail("idempotency_key_reuse",409))
+        if prior[0]==v:return ("replay",prior[1]),None
+        return None,fail("idempotency_key_reuse",409)
     return (key,v),None
 def done(i,status,obj): S["idempotency"][i[0]]=(i[1],deepcopy(obj));return status,obj
 def normal_fields(b):
     note=b.get("note","");vis=b.get("visibility","public")
     if not isinstance(note,str) or len(note)>200 or vis not in ("public","private"): raise ValueError()
     return note,vis
+def commit_move(fr,to,amt,note="",vis="public",created_at=None,**links):
+    ts=created_at or instant();p={"payment_id":ident("p"),"from_user_id":fr,"from_handle":S["users"][fr]["handle"],"to_user_id":to,"to_handle":S["users"][to]["handle"],"amount":amt,"currency":S["currency"],"note":note,"visibility":vis,"request_id":links.get("request_id"),"authorization_id":links.get("authorization_id"),"refund_of":links.get("refund_of"),"settlement_id":links.get("settlement_id"),"created_at":ts}
+    S["users"][fr]["total"]-=amt;S["users"][to]["total"]+=amt;S["payments"].append(p);S["revisions"][p["payment_id"]]=[{"payment_id":p["payment_id"],"revision":1,"amount":amt,"effective_at":ts,"recorded_at":ts,"reason":""}];return p
 def move(fr,to,amt,note="",vis="public",**links):
     if fr==to:return fail("self_payment",422)
     if balance(fr)-held(fr)<amt:return fail("insufficient_funds",409)
-    ts=instant();p={"payment_id":ident("p"),"from_user_id":fr,"from_handle":S["users"][fr]["handle"],"to_user_id":to,"to_handle":S["users"][to]["handle"],"amount":amt,"currency":S["currency"],"note":note,"visibility":vis,"request_id":links.get("request_id"),"authorization_id":links.get("authorization_id"),"refund_of":links.get("refund_of"),"settlement_id":links.get("settlement_id"),"created_at":ts}
-    S["users"][fr]["total"]-=amt;S["users"][to]["total"]+=amt;S["payments"].append(p);S["revisions"][p["payment_id"]]=[{"payment_id":p["payment_id"],"revision":1,"amount":amt,"effective_at":ts,"recorded_at":ts,"reason":""}];return 201,p
+    return 201,commit_move(fr,to,amt,note,vis,**links)
 def page(xs,q,key):
     try:
         rawlim=q.get("limit",["50"])[0]; rawoff=q.get("offset",["0"])[0]
@@ -114,11 +183,11 @@ class App(BaseHTTPRequestHandler):
  def send(self,s,o=None):
   self.send_response(s)
   if o is not None:
-   raw=json.dumps(o,ensure_ascii=False,allow_nan=False).encode();self.send_header("Content-Type","application/json; charset=utf-8");self.send_header("Content-Length",str(len(raw)))
+   raw=json.dumps(json_safe(o),ensure_ascii=False,allow_nan=False).encode();self.send_header("Content-Type","application/json; charset=utf-8");self.send_header("Content-Length",str(len(raw)))
   self.end_headers()
   if o is not None:self.wfile.write(raw)
  def read(self):
-  try:return json.loads(self.rfile.read(int(self.headers.get("Content-Length","0"))).decode(),parse_constant=lambda _:(_ for _ in ()).throw(ValueError()))
+  try:return json.loads(self.rfile.read(int(self.headers.get("Content-Length","0"))).decode(),parse_float=Decimal,parse_int=Decimal,parse_constant=lambda _:(_ for _ in ()).throw(ValueError()))
   except:return None
  def do_GET(self):
   u=urlparse(self.path);q=parse_qs(u.query,keep_blank_values=True)
@@ -126,7 +195,7 @@ class App(BaseHTTPRequestHandler):
   if self.headers.get("Accept","").find("text/html")>=0 and u.path in ("/","/requests","/split","/signup","/login","/authorizations") and STAGE>=2:
    raw=html().encode();self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Content-Length",str(len(raw)));self.end_headers();self.wfile.write(raw);return
   with LOCK:
-   if u.path=="/_test/export":return self.send(200,{"track":"pocketful","format_version":STAGE,"state":deepcopy(S)})
+   if u.path=="/_test/export":return self.send(200,{"track":"pocketful","format_version":STAGE,"state":export_state()})
    uid=auth(self)
    if not uid:return self.send(*fail("unauthenticated",401))
    expire()
@@ -171,8 +240,9 @@ class App(BaseHTTPRequestHandler):
     except:return self.send(*fail("validation_failed",422))
    if u.path=="/_test/import":
     try:
-     if b.get("track")!="pocketful" or not isinstance(b.get("state"),dict):raise ValueError()
-     S.clear();S.update(deepcopy(b["state"]));return self.send(204)
+     if b.get("track")!="pocketful" or b.get("format_version") not in range(1,STAGE+1):raise ValueError()
+     candidate=import_state(b.get("state"))
+     S.clear();S.update(candidate);return self.send(204)
     except:return self.send(*fail("validation_failed",422))
    if u.path in ("/auth/login","/auth/signup"):
     if u.path.endswith("login"):
@@ -240,10 +310,10 @@ class App(BaseHTTPRequestHandler):
      if any(balance(x)-held(x)+d<0 for x,d in net.items()):return self.send(*fail("insufficient_funds",409))
     except KeyError:return self.send(*fail("not_found",404))
     except:return self.send(*fail("validation_failed",422))
-    sid=ident("st");out=[]
+    sid=ident("st");committed=instant();out=[]
     for x in ts:
-     z=move(S["handles"][x["from_handle"]],S["handles"][x["to_handle"]],int(x["amount"]),x.get("note",""),x.get("visibility","public"),settlement_id=sid);out.append(z[1])
-    return self.send(*done(ii,201,{"settlement_id":sid,"committed_at":out[0]["created_at"],"payments":out}))
+     out.append(commit_move(S["handles"][x["from_handle"]],S["handles"][x["to_handle"]],nint(x["amount"],1),x.get("note",""),x.get("visibility","public"),created_at=committed,settlement_id=sid))
+    return self.send(*done(ii,201,{"settlement_id":sid,"committed_at":committed,"payments":out}))
    if u.path=="/authorizations" and STAGE>=2:
     try:amt=nint(b.get("amount"),1);note,vis=normal_fields(b);to=S["handles"].get(b.get("to_handle"))
     except:return self.send(*fail("validation_failed",422))
