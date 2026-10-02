@@ -29,25 +29,23 @@ def hpassword(p):
 def same_password(p,stored): return isinstance(p,str) and stored==hpassword(p)
 def ident(prefix): S["seq"]+=1; return f"{prefix}_{S['seq']}"
 def json_identity(x):
-    if x is None or isinstance(x,(str,bool)): return x
+    """Return a tagged, canonical parsed-JSON value for idempotency comparison."""
+    if x is None: return ["null"]
+    if isinstance(x,bool): return ["bool",x]
+    if isinstance(x,str): return ["string",x]
     if isinstance(x,(int,float,Decimal)) and not isinstance(x,bool):
         try: d=Decimal(str(x)) if not isinstance(x,Decimal) else x
         except (InvalidOperation,ValueError): raise ValueError()
         if not d.is_finite(): raise ValueError()
-        sign,digits,exponent=d.as_tuple(); digits=''.join(map(str,digits))
-        digits=digits.lstrip('0') or '0'
-        if digits=='0': return {"$number":"0"}
+        sign,digits,exponent=d.as_tuple(); digits=''.join(map(str,digits)).lstrip('0') or '0'
+        if digits=='0': return ["number","0",0]
         while digits.endswith('0'):
             digits=digits[:-1]; exponent+=1
-        if exponent>=0: value=digits+'0'*exponent
-        else:
-            cut=len(digits)+exponent
-            value=(digits[:cut]+'.'+digits[cut:]) if cut>0 else '0.'+'0'*(-cut)+digits
-        return {"$number":('-' if sign else '')+value}
-    if isinstance(x,list): return [json_identity(v) for v in x]
-    if isinstance(x,dict): return {str(k):json_identity(v) for k,v in x.items()}
+        return ["number",'-' if sign else '+',digits,exponent]
+    if isinstance(x,list): return ["array",[json_identity(v) for v in x]]
+    if isinstance(x,dict): return ["object",[[str(k),json_identity(v)] for k,v in sorted(x.items(),key=lambda kv:str(kv[0]))]]
     raise ValueError()
-def body_value(b): return json.dumps(json_identity(b),sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False)
+def body_value(b): return json.dumps(json_identity(b),separators=(",",":"),ensure_ascii=False,allow_nan=False)
 def json_safe(x):
     if isinstance(x,Decimal): return int(x) if x == x.to_integral_value() else float(x)
     if isinstance(x,set): return sorted(x)
