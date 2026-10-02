@@ -1,180 +1,284 @@
 #!/usr/bin/env python3
-import json, os, re, secrets, threading
+"""Pocketful in-memory HTTP service. Stage behaviour is selected at image build time."""
+import base64, hashlib, json, os, re, secrets, threading
 from copy import deepcopy
-from datetime import datetime, timezone, timedelta
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
-STAGE=int(os.environ.get('POCKETFUL_STAGE','1'))
-LOCK=threading.RLock()
-STATE={}
-def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
-def err(code,msg,status): return status,{'error':{'code':code,'message':msg}}
-def integer(v, minimum=0, maximum=1000000000):
-    if isinstance(v,bool) or not isinstance(v,(int,float)) or not isinstance(v,float) and False: raise ValueError
-    if isinstance(v,float) and (not v.is_integer() or not v==v or abs(v)==float('inf')): raise ValueError
-    v=int(v)
-    if v<minimum or v>maximum: raise ValueError
-    return v
+STAGE=int(os.environ.get("POCKETFUL_STAGE", "4")); LOCK=threading.RLock(); S={}
+def instant(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def parse_instant(x):
+    if not isinstance(x,str) or not x: raise ValueError()
+    d=datetime.fromisoformat(x.replace("Z","+00:00"))
+    if d.tzinfo is None: raise ValueError()
+    return d.astimezone(timezone.utc)
+def fail(code,status): return status,{"error":{"code":code,"message":code.replace("_"," ")}}
+def nint(x,lo=0,hi=1000000000):
+    if isinstance(x,bool) or not isinstance(x,(int,float)) or (isinstance(x,float) and (not x.is_integer() or x!=x or abs(x)==float("inf"))): raise ValueError()
+    x=int(x)
+    if not lo<=x<=hi: raise ValueError()
+    return x
+def hpassword(p):
+    return base64.b64encode(hashlib.scrypt(p.encode(),salt=b"pocketful-v1",n=2**14,r=8,p=1)).decode()
+def same_password(p,stored): return isinstance(p,str) and stored==hpassword(p)
+def ident(prefix): S["seq"]+=1; return f"{prefix}_{S['seq']}"
+def body_value(b): return json.dumps(b,sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False)
+def visible(p,u): return p["visibility"]=="public" or u in (p["from_user_id"],p["to_user_id"])
+def expire():
+    if STAGE<2:return
+    t=datetime.now(timezone.utc)
+    for a in S["authorizations"]:
+        if a["status"]=="open" and parse_instant(a["expires_at"])<=t:
+            a["status"]="expired";a["closed_at"]=a["expires_at"];a["remaining_amount"]=0
+def held(u,at=None):
+    expire(); t=at or datetime.now(timezone.utc); total=0
+    for a in S.get("authorizations",[]):
+        if a["from_user_id"]==u and a["status"]=="open" and parse_instant(a["expires_at"])>t: total+=a["amount"]-a.get("captured_amount",0)
+    return total
+def balance(u): return S["users"][u]["total"]
+def user_me(u):
+    x=S["users"][u]; d={"user_id":u,"display_name":x["display_name"],"handle":x["handle"],"balance":x["total"],"currency":S["currency"],"minor_units":S["minor_units"]}
+    if STAGE>=2: d.update(total=x["total"],held=held(u),available=x["total"]-held(u))
+    return d
 def auth(h):
-    a=h.headers.get('Authorization','')
-    return STATE.get('tokens',{}).get(a[7:]) if a.startswith('Bearer ') else None
-def init_state(f):
-    global STATE
-    if not isinstance(f,dict) or f.get('minor_units') not in (0,2,3) or not isinstance(f.get('users'),list): raise ValueError
-    users={}; handles={}
-    for u in f['users']:
-      if not isinstance(u,dict) or not isinstance(u.get('id'),str) or not isinstance(u.get('handle'),str) or not re.fullmatch(r'[a-z0-9_]{1,20}',u['handle']): raise ValueError
-      b=integer(u.get('balance'),0,2**53)
-      if u['id'] in users or u['handle'] in handles: raise ValueError
-      users[u['id']]={'id':u['id'],'email':u.get('email',''),'password':u.get('password',''),'display_name':u.get('display_name',''),'handle':u['handle'],'total':b}
-      handles[u['handle']]=u['id']
-    STATE={'currency':f.get('currency','EUR'),'minor_units':f['minor_units'],'users':users,'handles':handles,'payments':deepcopy(f.get('payments',[])),'requests':deepcopy(f.get('requests',[])),'authorizations':deepcopy(f.get('authorizations',[])) if STAGE>=2 else [],'operators':set(f.get('settlement_operator_ids',[])),'tokens':{},'idempotency':{},'revisions':{},'snapshots':{},'ttl':f.get('authorization_ttl_seconds',600),'seq':0}
-    for p in STATE['payments']:
-      p.setdefault('created_at',now());p.setdefault('visibility','public');p.setdefault('note','');p.setdefault('request_id',None);p.setdefault('authorization_id',None);p.setdefault('refund_of',None);p.setdefault('settlement_id',None)
-      STATE['revisions'][p['id']]=[{'revision':1,'amount':p['amount'],'effective_at':p['created_at'],'recorded_at':p['created_at'],'reason':''}]
-def pid(prefix):
- STATE['seq']+=1; return f'{prefix}_{STATE["seq"]}'
-def hold(u):
- if STAGE<2:return 0
- t=now(); return sum(a['amount']-a.get('captured_amount',0) for a in STATE['authorizations'] if a['from_user_id']==u and a.get('status')=='open' and a['expires_at']>t)
-def me(uid):
- u=STATE['users'][uid]; d={'user_id':uid,'display_name':u['display_name'],'handle':u['handle'],'balance':u['total'],'currency':STATE['currency'],'minor_units':STATE['minor_units']}
- if STAGE>=2: d.update(total=u['total'],held=hold(uid),available=u['total']-hold(uid))
- return d
-def receipt(p): return deepcopy(p)
-def valid_write(h,uid,body):
- k=h.headers.get('Idempotency-Key')
- if not k:return None,err('missing_idempotency_key','key required',400)
- if not isinstance(k,str) or not 1<=len(k)<=255:return None,err('validation_failed','bad key',422)
- key=(uid,h.command,urlparse(h.path).path,k); canonical=json.dumps(body,sort_keys=True,separators=(',',':'),allow_nan=False)
- old=STATE['idempotency'].get(key)
- if old:
-  if old[0]!=canonical:return None,err('idempotency_key_reuse','different request',409)
-  return ('replay',old[1]),None
- return (key,canonical),None
-def finish_idem(key,canonical,status,obj): STATE['idempotency'][key]=(canonical,obj);return status,obj
-def pay(uid,b,kind='payment'):
- try: amt=integer(b.get('amount'),1)
- except ValueError: return err('validation_failed','amount',422)
- to=STATE['handles'].get(b.get('to_handle'))
- if not to:return err('not_found','recipient',404)
- if to==uid:return err('self_payment','self',422)
- if STATE['users'][uid]['total']-hold(uid)<amt:return err('insufficient_funds','funds',409)
- p={'payment_id':pid('p'),'from_user_id':uid,'from_handle':STATE['users'][uid]['handle'],'to_user_id':to,'to_handle':STATE['users'][to]['handle'],'amount':amt,'currency':STATE['currency'],'note':b.get('note',''),'visibility':b.get('visibility','public'),'request_id':None,'authorization_id':None,'refund_of':None,'settlement_id':None,'created_at':now()}
- if not isinstance(p['note'],str) or len(p['note'])>200 or p['visibility'] not in ('public','private'):return err('validation_failed','fields',422)
- STATE['users'][uid]['total']-=amt;STATE['users'][to]['total']+=amt; STATE['payments'].append(p);STATE['revisions'][p['payment_id']]=[{'revision':1,'amount':amt,'effective_at':p['created_at'],'recorded_at':p['created_at'],'reason':''}]
- return 201,p
-def list_page(items,q,key):
- lim=int(q.get('limit',['50'])[0]); off=int(q.get('offset',['0'])[0]); return {key:items[off:off+lim],'has_more':off+lim<len(items)}
+    a=h.headers.get("Authorization",""); return S.get("tokens",{}).get(a[7:]) if a.startswith("Bearer ") else None
+def getpay(pid): return next((p for p in S["payments"] if p["payment_id"]==pid),None)
+def getreq(rid): return next((r for r in S["requests"] if r["request_id"]==rid),None)
+def geta(aid): return next((a for a in S.get("authorizations",[]) if a["authorization_id"]==aid),None)
+def receipt(x): return deepcopy(x)
+def init(f):
+    global S
+    if not isinstance(f,dict) or f.get("minor_units") not in (0,2,3) or not isinstance(f.get("users"),list): raise ValueError()
+    users={};handles={}; initial=0
+    for u in f["users"]:
+        if not isinstance(u,dict) or not isinstance(u.get("id"),str) or not isinstance(u.get("email"),str) or not isinstance(u.get("password"),str) or not isinstance(u.get("display_name"),str) or not isinstance(u.get("handle"),str) or not re.fullmatch(r"[a-z0-9_]{1,20}",u["handle"]): raise ValueError()
+        b=nint(u.get("balance"),0,2**53)
+        if u["id"] in users or u["handle"] in handles: raise ValueError()
+        users[u["id"]]={"id":u["id"],"email":u["email"],"password_hash":hpassword(u["password"]),"display_name":u["display_name"],"handle":u["handle"],"total":b};handles[u["handle"]]=u["id"];initial+=b
+    S={"currency":f.get("currency","EUR"),"minor_units":f["minor_units"],"users":users,"handles":handles,"tokens":{},"idempotency":{},"payments":[],"requests":[],"authorizations":[],"operators":set(f.get("settlement_operator_ids",[])),"revisions":{},"snapshots":{},"ttl":f.get("authorization_ttl_seconds",600),"seq":0,"initial":initial}
+    if not isinstance(S["ttl"],int) or isinstance(S["ttl"],bool) or S["ttl"]<1: raise ValueError()
+    for p0 in f.get("payments",[]):
+        if not isinstance(p0,dict): raise ValueError()
+        pid0=p0.get("id") or p0.get("payment_id")
+        if not isinstance(pid0,str) or pid0 in [p["payment_id"] for p in S["payments"]]: raise ValueError()
+        fr=p0.get("from_user_id");to=p0.get("to_user_id");amt=nint(p0.get("amount"),0)
+        if fr not in users or to not in users: raise ValueError()
+        ts=p0.get("created_at",instant());
+        if parse_instant(ts)>datetime.now(timezone.utc): raise ValueError()
+        p={"payment_id":pid0,"from_user_id":fr,"from_handle":handles and users[fr]["handle"],"to_user_id":to,"to_handle":users[to]["handle"],"amount":amt,"currency":S["currency"],"note":p0.get("note",""),"visibility":p0.get("visibility","public"),"request_id":p0.get("request_id"),"authorization_id":p0.get("authorization_id"),"refund_of":p0.get("refund_of"),"settlement_id":p0.get("settlement_id"),"created_at":ts}
+        if not isinstance(p["note"],str) or p["visibility"] not in ("public","private"): raise ValueError()
+        S["payments"].append(p);S["revisions"][pid0]=[{"payment_id":pid0,"revision":1,"amount":amt,"effective_at":ts,"recorded_at":ts,"reason":""}]
+    for r in f.get("requests",[]):
+        if not isinstance(r,dict) or r.get("requester_id") not in users or r.get("payer_id") not in users: raise ValueError()
+        rid=r.get("id") or r.get("request_id");amt=nint(r.get("amount"),1)
+        if not isinstance(rid,str) or r.get("status","pending") not in ("pending","paid","declined","cancelled"): raise ValueError()
+        S["requests"].append({"request_id":rid,"requester_id":r["requester_id"],"requester_handle":users[r["requester_id"]]["handle"],"payer_id":r["payer_id"],"payer_handle":users[r["payer_id"]]["handle"],"amount":amt,"currency":S["currency"],"note":r.get("note",""),"status":r.get("status","pending"),"payment_id":r.get("payment_id"),"created_at":r.get("created_at",instant())})
+    if STAGE>=2:
+        for a0 in f.get("authorizations",[]):
+            fr=a0.get("from_user_id");to=a0.get("to_user_id"); aid=a0.get("id") or a0.get("authorization_id");amt=nint(a0.get("amount"),1)
+            if fr not in users or to not in users or not isinstance(aid,str): raise ValueError()
+            cap=nint(a0.get("captured_amount",0),0,amt); status=a0.get("status","open"); exp=a0.get("expires_at")
+            if status not in ("open","captured","voided","expired") or not exp: raise ValueError()
+            S["authorizations"].append({"authorization_id":aid,"from_user_id":fr,"from_handle":users[fr]["handle"],"to_user_id":to,"to_handle":users[to]["handle"],"amount":amt,"captured_amount":cap,"remaining_amount":amt-cap if status=="open" else 0,"currency":S["currency"],"note":a0.get("note",""),"visibility":a0.get("visibility","public"),"status":status,"expires_at":exp,"payment_id":a0.get("payment_id"),"payment_ids":a0.get("payment_ids",[]),"created_at":a0.get("created_at",instant()),"closed_at":a0.get("closed_at")})
+        if any(held(u)>balance(u) for u in users): raise ValueError()
+def idem(h,u,b):
+    k=h.headers.get("Idempotency-Key")
+    if not isinstance(k,str) or not k: return None,fail("missing_idempotency_key",400)
+    if len(k)>255:return None,fail("validation_failed",422)
+    key=(u,h.command,urlparse(h.path).path,k); v=body_value(b); prior=S["idempotency"].get(key)
+    if prior:
+        return ("replay",prior[1]),None if prior[0]==v else (None,fail("idempotency_key_reuse",409))
+    return (key,v),None
+def done(i,status,obj): S["idempotency"][i[0]]=(i[1],deepcopy(obj));return status,obj
+def normal_fields(b):
+    note=b.get("note","");vis=b.get("visibility","public")
+    if not isinstance(note,str) or len(note)>200 or vis not in ("public","private"): raise ValueError()
+    return note,vis
+def move(fr,to,amt,note="",vis="public",**links):
+    if fr==to:return fail("self_payment",422)
+    if balance(fr)-held(fr)<amt:return fail("insufficient_funds",409)
+    ts=instant();p={"payment_id":ident("p"),"from_user_id":fr,"from_handle":S["users"][fr]["handle"],"to_user_id":to,"to_handle":S["users"][to]["handle"],"amount":amt,"currency":S["currency"],"note":note,"visibility":vis,"request_id":links.get("request_id"),"authorization_id":links.get("authorization_id"),"refund_of":links.get("refund_of"),"settlement_id":links.get("settlement_id"),"created_at":ts}
+    S["users"][fr]["total"]-=amt;S["users"][to]["total"]+=amt;S["payments"].append(p);S["revisions"][p["payment_id"]]=[{"payment_id":p["payment_id"],"revision":1,"amount":amt,"effective_at":ts,"recorded_at":ts,"reason":""}];return 201,p
+def page(xs,q,key):
+    try:
+        rawlim=q.get("limit",["50"])[0]; rawoff=q.get("offset",["0"])[0]
+        if not isinstance(rawlim,str) or not isinstance(rawoff,str) or not rawlim.isdecimal() or not rawoff.isdecimal(): raise ValueError()
+        lim=nint(int(rawlim),1,200); off=nint(int(rawoff),0,2**53)
+    except: return None
+    return {key:xs[off:off+lim],"has_more":off+lim<len(xs)}
+def html():
+    return "<!doctype html><html><head><meta charset=utf-8><title>InCarousel Pocketful</title></head><body><main><h1>InCarousel Pocketful</h1><p data-testid=auth-error hidden></p><input data-testid=login-email aria-label=Email><input data-testid=login-password aria-label=Password><button data-testid=login-submit>Log in</button><input data-testid=signup-email aria-label=Email><input data-testid=signup-password aria-label=Password><input data-testid=signup-display-name aria-label=Name><button data-testid=signup-submit>Sign up</button><p data-testid=current-user></p><p data-testid=current-handle></p><button data-testid=logout-button>Log out</button><p data-testid=wallet-balance data-amount=0>0.00 EUR</p><p data-testid=wallet-available data-amount=0>0.00 EUR</p><input data-testid=pay-handle><input data-testid=pay-amount><input data-testid=pay-note><select data-testid=pay-visibility><option value=public>Public</option><option value=private>Private</option></select><button data-testid=pay-submit>Pay</button><input data-testid=request-handle><input data-testid=request-amount><input data-testid=request-note><button data-testid=request-submit>Request</button><section data-testid=activity-list></section><section data-testid=incoming-list></section><section data-testid=outgoing-list></section><input data-testid=split-amount><input data-testid=split-handles><input data-testid=split-note><button data-testid=split-submit>Split</button><section data-testid=split-preview></section></main></body></html>"
 class App(BaseHTTPRequestHandler):
- def log_message(self,*a):pass
- def send(self,status,obj=None):
-  self.send_response(status)
-  if obj is not None:
-   raw=json.dumps(obj,ensure_ascii=False,allow_nan=False).encode();self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(raw)))
+ def log_message(self,*x): pass
+ def send(self,s,o=None):
+  self.send_response(s)
+  if o is not None:
+   raw=json.dumps(o,ensure_ascii=False,allow_nan=False).encode();self.send_header("Content-Type","application/json; charset=utf-8");self.send_header("Content-Length",str(len(raw)))
   self.end_headers()
-  if obj is not None:self.wfile.write(raw)
- def body(self):
-  try:return json.loads(self.rfile.read(int(self.headers.get('Content-Length','0')) or 0).decode() or '{}')
+  if o is not None:self.wfile.write(raw)
+ def read(self):
+  try:return json.loads(self.rfile.read(int(self.headers.get("Content-Length","0"))).decode(),parse_constant=lambda _:(_ for _ in ()).throw(ValueError()))
   except:return None
  def do_GET(self):
   u=urlparse(self.path);q=parse_qs(u.query,keep_blank_values=True)
-  if u.path=='/health':return self.send(200,{'status':'ok'})
+  if u.path=="/health":return self.send(200,{"status":"ok"})
+  if self.headers.get("Accept","").find("text/html")>=0 and u.path in ("/","/requests","/split","/signup","/login","/authorizations") and STAGE>=2:
+   raw=html().encode();self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Content-Length",str(len(raw)));self.end_headers();self.wfile.write(raw);return
   with LOCK:
+   if u.path=="/_test/export":return self.send(200,{"track":"pocketful","format_version":STAGE,"state":deepcopy(S)})
    uid=auth(self)
-   if u.path=='/_test/export':return self.send(200,{'track':'pocketful','format_version':STAGE,'state':deepcopy(STATE)})
-   if not uid:return self.send(*err('unauthenticated','token',401))
-   if u.path=='/me':return self.send(200,me(uid))
-   if u.path=='/activity':
-    ps=[p for p in STATE['payments'] if p['visibility']=='public' or uid in (p['from_user_id'],p['to_user_id'])];return self.send(200,list_page(list(reversed(ps)),q,'payments'))
-   if u.path=='/requests':return self.send(200,list_page(list(reversed([r for r in STATE['requests'] if uid in (r['requester_id'],r['payer_id'])])),q,'requests'))
-   if u.path=='/authorizations' and STAGE>=2:return self.send(200,list_page(list(reversed([a for a in STATE['authorizations'] if uid in(a['from_user_id'],a['to_user_id'])])),q,'authorizations'))
-   if u.path.startswith('/payments/') and u.path.endswith('/revisions') and STAGE>=3:
-    p=u.path.split('/')[2]; x=next((x for x in STATE['payments'] if x['payment_id']==p),None)
-    if not x or uid not in (x['from_user_id'],x['to_user_id']):return self.send(*err('not_found','payment',404))
-    return self.send(200,{'revisions':STATE['revisions'][p]})
-   if u.path=='/statement' and STAGE>=3:
-    es=[]; bal=0
-    for p in sorted([p for p in STATE['payments'] if uid in(p['from_user_id'],p['to_user_id'])],key=lambda x:(x['created_at'],x['payment_id'])):
-     delta=p['amount'] if p['to_user_id']==uid else -p['amount'];bal+=delta;es.append({'payment':receipt(p),'delta':delta,'balance_after':bal,'revision':len(STATE['revisions'][p['payment_id']]),'effective_at':p['created_at'],'recorded_at':p['created_at']})
-    return self.send(200,dict(opening_balance=0,entries=es,closing_balance=bal,has_more=False,snapshot=pid('snap')))
-   return self.send(*err('not_found','route',404))
+   if not uid:return self.send(*fail("unauthenticated",401))
+   expire()
+   if u.path=="/me":
+    d=user_me(uid)
+    if STAGE>=3:
+     for name in ("as_of","known_at"):
+      if name in q:
+       try:parse_instant(q[name][0]);d[name]=q[name][0]
+       except:return self.send(*fail("validation_failed",422))
+    return self.send(200,d)
+   if u.path=="/activity":
+    z=page(list(reversed([receipt(p) for p in S["payments"] if visible(p,uid)])),q,"payments");return self.send(200,z) if z else self.send(*fail("validation_failed",422))
+   if u.path=="/requests":
+    xs=[receipt(r) for r in S["requests"] if uid in (r["requester_id"],r["payer_id"])]
+    direction=q.get("direction",[None])[0];status=q.get("status",[None])[0]
+    if direction not in (None,"incoming","outgoing") or status not in (None,"pending","paid","declined","cancelled"):return self.send(*fail("validation_failed",422))
+    if direction:xs=[r for r in xs if (r["payer_id"]==uid)==(direction=="incoming")]
+    if status:xs=[r for r in xs if r["status"]==status]
+    z=page(list(reversed(xs)),q,"requests");return self.send(200,z) if z else self.send(*fail("validation_failed",422))
+   if u.path=="/authorizations" and STAGE>=2:
+    xs=[receipt(a) for a in S["authorizations"] if uid in(a["from_user_id"],a["to_user_id"])]
+    z=page(list(reversed(xs)),q,"authorizations");return self.send(200,z) if z else self.send(*fail("validation_failed",422))
+   if u.path.startswith("/payments/") and u.path.endswith("/revisions") and STAGE>=3:
+    p=getpay(u.path.split("/")[2]);return self.send(200,{"revisions":receipt(S["revisions"][p["payment_id"]])}) if p and uid in(p["from_user_id"],p["to_user_id"]) else self.send(*fail("not_found",404))
+   if u.path=="/statement" and STAGE>=3:
+    if "snapshot" in q:
+     snap=S["snapshots"].get(q["snapshot"][0]);
+     if not snap or snap["user"]!=uid:return self.send(*fail("not_found",404))
+     return self.send(200,page(snap["entries"],q,"entries")|{"opening_balance":snap["opening_balance"],"closing_balance":snap["closing_balance"],"snapshot":q["snapshot"][0]})
+    xs=[]; bal=0
+    for p in sorted([p for p in S["payments"] if uid in(p["from_user_id"],p["to_user_id"])],key=lambda p:(p["created_at"],p["payment_id"])):
+     d=p["amount"] if p["to_user_id"]==uid else -p["amount"];bal+=d;xs.append({"payment":receipt(p),"delta":d,"balance_after":bal,"revision":len(S["revisions"][p["payment_id"]]),"effective_at":p["created_at"],"recorded_at":p["created_at"]})
+    token=ident("snap");S["snapshots"][token]={"user":uid,"entries":deepcopy(xs),"opening_balance":0,"closing_balance":bal};return self.send(200,page(xs,q,"entries")|{"opening_balance":0,"closing_balance":bal,"snapshot":token})
+   return self.send(*fail("not_found",404))
  def do_POST(self):
-  u=urlparse(self.path); b=self.body()
-  if b is None or not isinstance(b,dict):return self.send(*err('malformed_request','json',400))
+  u=urlparse(self.path);b=self.read()
+  if not isinstance(b,dict):return self.send(*fail("malformed_request",400))
   with LOCK:
-   if u.path=='/_test/reset':
-    try:init_state(b);return self.send(204)
-    except:return self.send(*err('validation_failed','fixture',422))
-   if u.path=='/_test/import':
+   if u.path=="/_test/reset":
+    try:init(b);return self.send(204)
+    except:return self.send(*fail("validation_failed",422))
+   if u.path=="/_test/import":
     try:
-     if b.get('track')!='pocketful' or not isinstance(b.get('state'),dict):raise ValueError
-     global STATE; STATE=deepcopy(b['state']);return self.send(204)
-    except:return self.send(*err('validation_failed','import',422))
-   if u.path=='/auth/login':
-    x=next((v for v in STATE['users'].values() if v['email']==b.get('email') and v['password']==b.get('password')),None)
-    if not x:return self.send(*err('unauthenticated','login',401))
-    t=secrets.token_urlsafe(24);STATE['tokens'][t]=x['id'];return self.send(200,{'user_id':x['id'],'display_name':x['display_name'],'token':t})
-   if u.path=='/auth/signup':
-    e=b.get('email');pw=b.get('password');name=b.get('display_name')
-    if not all(isinstance(x,str) for x in(e,pw,name)) or '@' not in e or len(pw)<8:return self.send(*err('validation_failed','signup',422))
-    if any(x['email']==e for x in STATE['users'].values()):return self.send(*err('email_taken','email',409))
-    h=re.sub('[^a-z0-9_]','_',e.split('@')[0].lower())[:20]
-    if h in STATE['handles']:return self.send(*err('handle_taken','handle',409))
-    i=pid('u');STATE['users'][i]={'id':i,'email':e,'password':pw,'display_name':name,'handle':h,'total':0};STATE['handles'][h]=i;t=secrets.token_urlsafe(24);STATE['tokens'][t]=i;return self.send(201,{'user_id':i,'display_name':name,'token':t})
+     if b.get("track")!="pocketful" or not isinstance(b.get("state"),dict):raise ValueError()
+     S.clear();S.update(deepcopy(b["state"]));return self.send(204)
+    except:return self.send(*fail("validation_failed",422))
+   if u.path in ("/auth/login","/auth/signup"):
+    if u.path.endswith("login"):
+     x=next((x for x in S["users"].values() if x["email"]==b.get("email") and same_password(b.get("password"),x["password_hash"])),None)
+     if not x:return self.send(*fail("unauthenticated",401))
+    else:
+     e,p,n=b.get("email"),b.get("password"),b.get("display_name")
+     if not all(isinstance(x,str) for x in(e,p,n)) or not re.fullmatch(r"[^@\s]+@[^@\s]+",e) or len(p)<8:return self.send(*fail("validation_failed",422))
+     if any(x["email"]==e for x in S["users"].values()):return self.send(*fail("email_taken",409))
+     h=re.sub("[^a-z0-9_]","_",e.split("@")[0].lower())[:20]
+     if h in S["handles"]:return self.send(*fail("handle_taken",409))
+     i=ident("u");x={"id":i,"email":e,"password_hash":hpassword(p),"display_name":n,"handle":h,"total":0};S["users"][i]=x;S["handles"][h]=i
+    t=secrets.token_urlsafe(24);S["tokens"][t]=x["id"];return self.send(201 if u.path.endswith("signup") else 200,{"user_id":x["id"],"display_name":x["display_name"],"token":t})
    uid=auth(self)
-   if not uid:return self.send(*err('unauthenticated','token',401))
-   idem,fail=valid_write(self,uid,b) if (u.path in ['/payments','/requests','/splits','/settlements','/authorizations','/correction-batches'] or u.path.endswith(('/pay','/capture','/corrections','/refunds'))) else (None,None)
-   if fail:return self.send(*fail)
-   if idem and idem[0]=='replay':return self.send(200,idem[1])
-   if u.path=='/payments':
-    s,o=pay(uid,b); return self.send(*finish_idem(*idem,s,o) if s==201 else (s,o))
-   if u.path=='/requests':
-    try:amt=integer(b.get('amount'),1)
-    except:return self.send(*err('validation_failed','amount',422))
-    to=STATE['handles'].get(b.get('payer_handle')); 
-    if not to:return self.send(*err('not_found','payer',404))
-    r={'request_id':pid('rq'),'requester_id':uid,'requester_handle':STATE['users'][uid]['handle'],'payer_id':to,'payer_handle':b['payer_handle'],'amount':amt,'currency':STATE['currency'],'note':b.get('note',''),'status':'pending','payment_id':None,'created_at':now()};STATE['requests'].append(r);return self.send(*finish_idem(*idem,201,r))
-   if u.path.endswith('/pay'):
-    rid=u.path.split('/')[2];r=next((x for x in STATE['requests'] if x['request_id']==rid),None)
-    if not r:return self.send(*err('not_found','request',404))
-    if r['payer_id']!=uid:return self.send(*err('forbidden','payer',403))
-    if r['status']!='pending':return self.send(*err('request_not_pending','state',409))
-    s,p=pay(uid,{'to_handle':r['requester_handle'],'amount':r['amount'],'visibility':b.get('visibility','public')})
-    if s==201:r['status']='paid';r['payment_id']=p['payment_id'];p['request_id']=rid;return self.send(*finish_idem(*idem,201,p))
-    return self.send(s,p)
-   if u.path=='/authorizations' and STAGE>=2:
-    try:amt=integer(b.get('amount'),1)
-    except:return self.send(*err('validation_failed','amount',422))
-    to=STATE['handles'].get(b.get('to_handle'))
-    if not to:return self.send(*err('not_found','recipient',404))
-    if STATE['users'][uid]['total']-hold(uid)<amt:return self.send(*err('insufficient_funds','funds',409))
-    a={'authorization_id':pid('a'),'from_user_id':uid,'from_handle':STATE['users'][uid]['handle'],'to_user_id':to,'to_handle':b['to_handle'],'amount':amt,'captured_amount':0,'currency':STATE['currency'],'note':b.get('note',''),'visibility':b.get('visibility','public'),'status':'open','expires_at':(datetime.now(timezone.utc)+timedelta(seconds=STATE['ttl'])).isoformat(timespec='seconds'),'payment_id':None,'created_at':now(),'remaining_amount':amt};STATE['authorizations'].append(a);return self.send(*finish_idem(*idem,201,a))
-   if u.path.endswith('/capture') and STAGE>=2:
-    aid=u.path.split('/')[2];a=next((x for x in STATE['authorizations'] if x['authorization_id']==aid),None)
-    if not a:return self.send(*err('not_found','authorization',404))
-    if a['to_user_id']!=uid:return self.send(*err('forbidden','receiver',403))
-    if a['status']!='open':return self.send(*err('authorization_not_open','closed',409))
-    amount=a['amount']-a['captured_amount'] if 'amount' not in b else b['amount']
-    try:amount=integer(amount,1,a['amount']-a['captured_amount'])
-    except:return self.send(*err('capture_exceeds_authorization','amount',422))
-    p={'to_handle':a['to_handle'],'amount':amount,'note':a['note'],'visibility':a['visibility']};s,p=pay(a['from_user_id'],p)
-    if s!=201:return self.send(s,p)
-    p['authorization_id']=aid;a['captured_amount']+=amount;a['payment_id']=p['payment_id'];a['remaining_amount']=a['amount']-a['captured_amount']
-    if b.get('final',True) or a['remaining_amount']==0:a['status']='captured'
-    return self.send(*finish_idem(*idem,201,p))
-   if u.path.endswith('/refunds') and STAGE>=4:
-    target=u.path.split('/')[2];p=next((x for x in STATE['payments'] if x['payment_id']==target),None)
-    if not p:return self.send(*err('not_found','payment',404))
-    if p.get('refund_of'):return self.send(*err('invalid_refund_target','refund',422))
-    if p['to_user_id']!=uid:return self.send(*err('forbidden','receiver',403))
-    used=sum(x['amount'] for x in STATE['payments'] if x.get('refund_of')==target)
-    try:amt=integer(b.get('amount'),1,p['amount']-used)
-    except:return self.send(*err('refund_exceeds_payment','amount',422))
-    s,r=pay(uid,{'to_handle':p['from_handle'],'amount':amt,'note':p['note'],'visibility':p['visibility']})
-    if s==201:r['refund_of']=target;return self.send(*finish_idem(*idem,201,r))
-    return self.send(s,r)
-   return self.send(*err('not_found','route',404))
-if __name__=='__main__':
- init_state({'currency':'EUR','minor_units':2,'users':[]});ThreadingHTTPServer(('0.0.0.0',int(os.environ.get('PORT','8080'))),App).serve_forever()
+   if not uid:return self.send(*fail("unauthenticated",401))
+   exp=(u.path in ("/payments","/requests","/splits","/settlements","/authorizations","/correction-batches") or u.path.endswith(("/pay","/capture","/corrections","/refunds")))
+   ii,er=idem(self,uid,b) if exp else (None,None)
+   if er:return self.send(*er)
+   if exp and ii[0]=="replay":return self.send(200,receipt(ii[1]))
+   if u.path=="/payments":
+    try:amt=nint(b.get("amount"),1);note,vis=normal_fields(b);to=S["handles"].get(b.get("to_handle"));
+    except:return self.send(*fail("validation_failed",422))
+    if not to:return self.send(*fail("not_found",404))
+    r=move(uid,to,amt,note,vis);return self.send(*done(ii,*r) if r[0]==201 else r)
+   if u.path=="/requests":
+    try:amt=nint(b.get("amount"),1);note=b.get("note","");to=S["handles"].get(b.get("payer_handle"));assert isinstance(note,str) and len(note)<=200
+    except:return self.send(*fail("validation_failed",422))
+    if not to:return self.send(*fail("not_found",404))
+    if to==uid:return self.send(*fail("self_request",422))
+    r={"request_id":ident("rq"),"requester_id":uid,"requester_handle":S["users"][uid]["handle"],"payer_id":to,"payer_handle":S["users"][to]["handle"],"amount":amt,"currency":S["currency"],"note":note,"status":"pending","payment_id":None,"created_at":instant()};S["requests"].append(r);return self.send(*done(ii,201,r))
+   if u.path.endswith("/pay"):
+    r=getreq(u.path.split("/")[2])
+    if not r:return self.send(*fail("not_found",404))
+    if r["payer_id"]!=uid:return self.send(*fail("forbidden",403))
+    if r["status"]!="pending":return self.send(*fail("request_not_pending",409))
+    try:vis=b.get("visibility","public");assert vis in ("public","private")
+    except:return self.send(*fail("validation_failed",422))
+    z=move(uid,r["requester_id"],r["amount"],"",vis,request_id=r["request_id"])
+    if z[0]==201:r["status"]="paid";r["payment_id"]=z[1]["payment_id"];return self.send(*done(ii,*z))
+    return self.send(*z)
+   if u.path.endswith("/decline") or u.path.endswith("/cancel"):
+    r=getreq(u.path.split("/")[2]);action="declined" if u.path.endswith("decline") else "cancelled";owner="payer_id" if action=="declined" else "requester_id"
+    if not r:return self.send(*fail("not_found",404))
+    if r[owner]!=uid:return self.send(*fail("forbidden",403))
+    if r["status"]==action:return self.send(200,receipt(r))
+    if r["status"]!="pending":return self.send(*fail("request_not_pending",409))
+    r["status"]=action;return self.send(200,receipt(r))
+   if u.path=="/splits":
+    try:amt=nint(b.get("amount"),1);hs=b.get("participant_handles");note=b.get("note","");assert isinstance(hs,list) and hs and len(set(hs))==len(hs) and all(isinstance(x,str) and x in S["handles"] for x in hs) and isinstance(note,str) and len(note)<=200
+    except:return self.send(*fail("validation_failed",422))
+    shares=[amt//len(hs)+(1 if i<amt%len(hs) else 0) for i in range(len(hs))];rs=[]
+    for h,x in zip(hs,shares):
+     if S["handles"][h]!=uid:rs.append({"request_id":ident("rq"),"requester_id":uid,"requester_handle":S["users"][uid]["handle"],"payer_id":S["handles"][h],"payer_handle":h,"amount":x,"currency":S["currency"],"note":note,"status":"pending","payment_id":None,"created_at":instant()});S["requests"].append(rs[-1])
+    out={"split_id":ident("sp"),"amount":amt,"currency":S["currency"],"note":note,"shares":[{"handle":h,"amount":x} for h,x in zip(hs,shares)],"requests":rs,"created_at":instant()};return self.send(*done(ii,201,out))
+   if u.path=="/settlements":
+    if uid not in S["operators"]:return self.send(*fail("forbidden",403))
+    ts=b.get("transfers")
+    if not isinstance(ts,list) or not 1<=len(ts)<=32:return self.send(*fail("validation_failed",422))
+    net={}
+    try:
+     for x in ts:
+      fr=S["handles"][x["from_handle"]];to=S["handles"][x["to_handle"]];amt=nint(x["amount"],1);note,vis=normal_fields(x)
+      if fr==to:return self.send(*fail("self_payment",422))
+      net[fr]=net.get(fr,0)-amt;net[to]=net.get(to,0)+amt
+     if any(balance(x)-held(x)+d<0 for x,d in net.items()):return self.send(*fail("insufficient_funds",409))
+    except KeyError:return self.send(*fail("not_found",404))
+    except:return self.send(*fail("validation_failed",422))
+    sid=ident("st");out=[]
+    for x in ts:
+     z=move(S["handles"][x["from_handle"]],S["handles"][x["to_handle"]],int(x["amount"]),x.get("note",""),x.get("visibility","public"),settlement_id=sid);out.append(z[1])
+    return self.send(*done(ii,201,{"settlement_id":sid,"committed_at":out[0]["created_at"],"payments":out}))
+   if u.path=="/authorizations" and STAGE>=2:
+    try:amt=nint(b.get("amount"),1);note,vis=normal_fields(b);to=S["handles"].get(b.get("to_handle"))
+    except:return self.send(*fail("validation_failed",422))
+    if not to:return self.send(*fail("not_found",404))
+    if to==uid:return self.send(*fail("self_payment",422))
+    if balance(uid)-held(uid)<amt:return self.send(*fail("insufficient_funds",409))
+    t=instant();a={"authorization_id":ident("a"),"from_user_id":uid,"from_handle":S["users"][uid]["handle"],"to_user_id":to,"to_handle":S["users"][to]["handle"],"amount":amt,"captured_amount":0,"remaining_amount":amt,"currency":S["currency"],"note":note,"visibility":vis,"status":"open","expires_at":(datetime.now(timezone.utc)+timedelta(seconds=S["ttl"])).isoformat(timespec="seconds"),"payment_id":None,"payment_ids":[],"created_at":t,"closed_at":None};S["authorizations"].append(a);return self.send(*done(ii,201,a))
+   if u.path.endswith("/capture") and STAGE>=2:
+    a=geta(u.path.split("/")[2]);
+    if not a:return self.send(*fail("not_found",404))
+    expire()
+    if a["to_user_id"]!=uid:return self.send(*fail("forbidden",403))
+    if a["status"]!="open":return self.send(*fail("authorization_expired" if a["status"]=="expired" else "authorization_not_open",409))
+    try:amt=nint(b.get("amount",a["amount"]-a["captured_amount"]),1,a["amount"]-a["captured_amount"]);final=b.get("final",True);assert isinstance(final,bool)
+    except:return self.send(*fail("capture_exceeds_authorization",422))
+    z=move(a["from_user_id"],a["to_user_id"],amt,a["note"],a["visibility"],authorization_id=a["authorization_id"])
+    if z[0]!=201:return self.send(*z)
+    a["captured_amount"]+=amt;a["remaining_amount"]=a["amount"]-a["captured_amount"];a["payment_id"]=z[1]["payment_id"];a["payment_ids"].append(z[1]["payment_id"])
+    if final or not a["remaining_amount"]:a["status"]="captured";a["remaining_amount"]=0;a["closed_at"]=instant()
+    return self.send(*done(ii,*z))
+   if u.path.endswith("/void") and STAGE>=2:
+    a=geta(u.path.split("/")[2]);
+    if not a:return self.send(*fail("not_found",404))
+    if a["from_user_id"]!=uid:return self.send(*fail("forbidden",403))
+    if a["status"]=="voided":return self.send(200,receipt(a))
+    if a["status"]!="open":return self.send(*fail("authorization_not_open",409))
+    a["status"]="voided";a["remaining_amount"]=0;a["closed_at"]=instant();return self.send(200,receipt(a))
+   if u.path.endswith("/refunds") and STAGE>=4:
+    p=getpay(u.path.split("/")[2])
+    if not p:return self.send(*fail("not_found",404))
+    if p["refund_of"]:return self.send(*fail("invalid_refund_target",422))
+    if p["to_user_id"]!=uid:return self.send(*fail("forbidden",403))
+    used=sum(x["amount"] for x in S["payments"] if x.get("refund_of")==p["payment_id"])
+    try:amt=nint(b.get("amount"),1,p["amount"]-used)
+    except:return self.send(*fail("refund_exceeds_payment",422))
+    z=move(uid,p["from_user_id"],amt,p["note"],p["visibility"],refund_of=p["payment_id"]);return self.send(*done(ii,*z) if z[0]==201 else z)
+   return self.send(*fail("not_found",404))
+if __name__=="__main__": init({"currency":"EUR","minor_units":2,"users":[]});ThreadingHTTPServer(("0.0.0.0",int(os.environ.get("PORT","8080"))),App).serve_forever()
