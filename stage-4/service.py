@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 STAGE=int(os.environ.get("POCKETFUL_STAGE", "4")); LOCK=threading.RLock(); S={}
-def instant(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def instant(): return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 def parse_instant(x):
     if not isinstance(x,str) or not x: raise ValueError()
     d=datetime.fromisoformat(x.replace("Z","+00:00"))
@@ -34,8 +34,16 @@ def json_identity(x):
         try: d=Decimal(str(x)) if not isinstance(x,Decimal) else x
         except (InvalidOperation,ValueError): raise ValueError()
         if not d.is_finite(): raise ValueError()
-        d=d.normalize()
-        return {"$number":format(d,"f") if d.adjusted() < 0 else str(d)}
+        sign,digits,exponent=d.as_tuple(); digits=''.join(map(str,digits))
+        digits=digits.lstrip('0') or '0'
+        if digits=='0': return {"$number":"0"}
+        while digits.endswith('0'):
+            digits=digits[:-1]; exponent+=1
+        if exponent>=0: value=digits+'0'*exponent
+        else:
+            cut=len(digits)+exponent
+            value=(digits[:cut]+'.'+digits[cut:]) if cut>0 else '0.'+'0'*(-cut)+digits
+        return {"$number":('-' if sign else '')+value}
     if isinstance(x,list): return [json_identity(v) for v in x]
     if isinstance(x,dict): return {str(k):json_identity(v) for k,v in x.items()}
     raise ValueError()
@@ -80,6 +88,21 @@ def import_state(raw):
     for r in raw["requests"]:
         if not isinstance(r,dict) or not isinstance(r.get("request_id"),str) or r.get("requester_id") not in users or r.get("payer_id") not in users or r.get("status") not in ("pending","paid","declined","cancelled"): raise ValueError()
         nint(r.get("amount"),0);parse_instant(r.get("created_at"))
+    revisions=raw.get("revisions",{})
+    if not isinstance(revisions,dict): raise ValueError()
+    for p in raw["payments"]:
+        pid=p["payment_id"]; rows=revisions.get(pid)
+        if rows is None:
+            revisions[pid]=[{"payment_id":pid,"revision":1,"amount":p["amount"],"effective_at":p["created_at"],"recorded_at":p["created_at"],"reason":""}]; continue
+        if not isinstance(rows,list) or not rows: raise ValueError()
+        previous_recorded=None
+        for number,row in enumerate(rows,1):
+            if not isinstance(row,dict) or row.get("payment_id")!=pid or row.get("revision")!=number or not isinstance(row.get("reason"),str) or len(row["reason"])>200: raise ValueError()
+            nint(row.get("amount"),0); effective=parse_instant(row.get("effective_at")); recorded=parse_instant(row.get("recorded_at"))
+            if effective>datetime.now(timezone.utc) or (previous_recorded is not None and recorded<=previous_recorded): raise ValueError()
+            previous_recorded=recorded
+    if any(pid not in seen for pid in revisions): raise ValueError()
+    raw["revisions"]=revisions
     idem={}
     for item in raw["idempotency"]:
         if not isinstance(item,dict) or not all(isinstance(item.get(k),str) for k in ("user_id","method","path","key","identity")) or item["user_id"] not in users: raise ValueError()
@@ -97,11 +120,25 @@ def expire():
     for a in S["authorizations"]:
         if a["status"]=="open" and parse_instant(a["expires_at"])<=t:
             a["status"]="expired";a["closed_at"]=a["expires_at"];a["remaining_amount"]=0
-def held(u,at=None):
-    expire(); t=at or datetime.now(timezone.utc); total=0
+def historical_held(u,at=None,known_at=None):
+    t=at or datetime.now(timezone.utc); total=0
     for a in S.get("authorizations",[]):
-        if a["from_user_id"]==u and a["status"]=="open" and parse_instant(a["expires_at"])>t: total+=a["amount"]-a.get("captured_amount",0)
+        if a["from_user_id"]!=u: continue
+        created=parse_instant(a["created_at"])
+        if created>t or (known_at and created>known_at): continue
+        expires=parse_instant(a["expires_at"])
+        if t>=expires: continue
+        closed=a.get("closed_at")
+        if closed:
+            closed=parse_instant(closed)
+            if closed<=t and (not known_at or closed<=known_at): continue
+        elif a.get("status")!="open":
+            continue
+        captured=sum(p["amount"] for p in S["payments"] if p.get("authorization_id")==a["authorization_id"] and parse_instant(p["created_at"])<=t and (not known_at or parse_instant(p["created_at"])<=known_at))
+        total+=a["amount"]-captured
     return total
+def held(u,at=None):
+    expire(); return historical_held(u,at)
 def balance(u): return S["users"][u]["total"]
 def user_me(u):
     x=S["users"][u]; d={"user_id":u,"display_name":x["display_name"],"handle":x["handle"],"balance":x["total"],"currency":S["currency"],"minor_units":S["minor_units"]}
@@ -113,7 +150,7 @@ def getpay(pid): return next((p for p in S["payments"] if p["payment_id"]==pid),
 def getreq(rid): return next((r for r in S["requests"] if r["request_id"]==rid),None)
 def geta(aid): return next((a for a in S.get("authorizations",[]) if a["authorization_id"]==aid),None)
 def receipt(x): return deepcopy(x)
-def init(f):
+def _init(f):
     global S
     if not isinstance(f,dict) or f.get("minor_units") not in (0,2,3) or not isinstance(f.get("users"),list): raise ValueError()
     users={};handles={}; initial=0
@@ -122,7 +159,7 @@ def init(f):
         b=nint(u.get("balance"),0,2**53)
         if u["id"] in users or u["handle"] in handles: raise ValueError()
         users[u["id"]]={"id":u["id"],"email":u["email"],"password_hash":hpassword(u["password"]),"display_name":u["display_name"],"handle":u["handle"],"total":b};handles[u["handle"]]=u["id"];initial+=b
-    S={"currency":f.get("currency","EUR"),"minor_units":int(f["minor_units"]),"users":users,"handles":handles,"tokens":{},"idempotency":{},"payments":[],"requests":[],"authorizations":[],"operators":set(f.get("settlement_operator_ids",[])),"revisions":{},"snapshots":{},"ttl":f.get("authorization_ttl_seconds",600),"seq":0,"initial":initial}
+    S={"currency":f.get("currency","EUR"),"minor_units":int(f["minor_units"]),"users":users,"handles":handles,"tokens":{},"idempotency":{},"payments":[],"requests":[],"authorizations":[],"operators":set(f.get("settlement_operator_ids",[])),"revisions":{},"snapshots":{},"ttl":nint(f.get("authorization_ttl_seconds",600),1,2**53),"seq":0,"initial":initial}
     if not isinstance(S["ttl"],int) or isinstance(S["ttl"],bool) or S["ttl"]<1: raise ValueError()
     for p0 in f.get("payments",[]):
         if not isinstance(p0,dict): raise ValueError()
@@ -150,6 +187,15 @@ def init(f):
             if status not in ("open","captured","voided","expired") or not exp: raise ValueError()
             S["authorizations"].append({"authorization_id":aid,"from_user_id":fr,"from_handle":users[fr]["handle"],"to_user_id":to,"to_handle":users[to]["handle"],"amount":amt,"captured_amount":cap,"remaining_amount":amt-cap if status=="open" else 0,"currency":S["currency"],"note":a0.get("note",""),"visibility":a0.get("visibility","public"),"status":status,"expires_at":exp,"payment_id":a0.get("payment_id"),"payment_ids":a0.get("payment_ids",[]),"created_at":a0.get("created_at",instant()),"closed_at":a0.get("closed_at")})
         if any(held(u)>balance(u) for u in users): raise ValueError()
+def init(f):
+    global S
+    previous=deepcopy(S)
+    try:
+        _init(f)
+    except Exception:
+        S=previous
+        raise
+
 def idem(h,u,b):
     k=h.headers.get("Idempotency-Key")
     if not isinstance(k,str) or not k: return None,fail("missing_idempotency_key",400)
@@ -203,8 +249,13 @@ def historical_safe(extra):
     for p in S["payments"]:
         selected=selected_payment(p,None,extra)
         if selected:boundaries.add(parse_instant(selected[1]["effective_at"]))
+    for a in S.get("authorizations",[]):
+        boundaries.add(parse_instant(a["created_at"])); boundaries.add(parse_instant(a["expires_at"]))
+        if a.get("closed_at"): boundaries.add(parse_instant(a["closed_at"]))
     for t in boundaries:
-        if any(historical_balance(uid,t,None,extra)<0 for uid in S["users"]):return False
+        for uid in S["users"]:
+            total=historical_balance(uid,t,None,extra)
+            if total<0 or total-historical_held(uid,t,None)<0:return False
     return True
 def correction_input(body, payment, now):
     if not isinstance(body,dict) or set(("expected_revision","amount","effective_at","reason"))-set(body):raise ValueError()
@@ -273,7 +324,9 @@ class App(BaseHTTPRequestHandler):
     if STAGE>=3:
      total=historical_balance(uid,asof,known)
      d.update(balance=total,total=total)
-     if STAGE>=2:d["available"]=total-held(uid,asof)
+     if STAGE>=2:
+      historical_hold=historical_held(uid,asof,known)
+      d["held"]=historical_hold;d["available"]=total-historical_hold
      if "as_of" in q:d["as_of"]=q["as_of"][0]
      if "known_at" in q:d["known_at"]=q["known_at"][0]
     return self.send(200,d)
@@ -323,6 +376,7 @@ class App(BaseHTTPRequestHandler):
    return self.send(*fail("not_found",404))
  def do_POST(self):
   u=urlparse(self.path);b=self.read()
+  if b is None and (u.path.endswith("/decline") or u.path.endswith("/cancel") or u.path.endswith("/void")): b={}
   if not isinstance(b,dict):return self.send(*fail("malformed_request",400))
   with LOCK:
    if u.path=="/_test/reset":
@@ -353,7 +407,10 @@ class App(BaseHTTPRequestHandler):
    if er:return self.send(*er)
    if exp and ii[0]=="replay":return self.send(200,receipt(ii[1]))
    if u.path=="/payments":
-    try:amt=nint(b.get("amount"),1);note,vis=normal_fields(b);to=S["handles"].get(b.get("to_handle"));
+    try:
+     amt=nint(b.get("amount"),1);note,vis=normal_fields(b);to_handle=b.get("to_handle")
+     if not isinstance(to_handle,str):raise ValueError()
+     to=S["handles"].get(to_handle)
     except:return self.send(*fail("validation_failed",422))
     if not to:return self.send(*fail("not_found",404))
     r=move(uid,to,amt,note,vis);return self.send(*done(ii,*r) if r[0]==201 else r)
@@ -381,8 +438,11 @@ class App(BaseHTTPRequestHandler):
     if r["status"]!="pending":return self.send(*fail("request_not_pending",409))
     r["status"]=action;return self.send(200,receipt(r))
    if u.path=="/splits":
-    try:amt=nint(b.get("amount"),1);hs=b.get("participant_handles");note=b.get("note","");assert isinstance(hs,list) and hs and len(set(hs))==len(hs) and all(isinstance(x,str) and x in S["handles"] for x in hs) and isinstance(note,str) and len(note)<=200
+    try:
+     amt=nint(b.get("amount"),1);hs=b.get("participant_handles");note=b.get("note","")
+     if not isinstance(hs,list) or not hs or not all(isinstance(x,str) for x in hs) or len(set(hs))!=len(hs) or not isinstance(note,str) or len(note)>200:raise ValueError()
     except:return self.send(*fail("validation_failed",422))
+    if any(x not in S["handles"] for x in hs):return self.send(*fail("not_found",404))
     shares=[amt//len(hs)+(1 if i<amt%len(hs) else 0) for i in range(len(hs))];rs=[]
     for h,x in zip(hs,shares):
      if S["handles"][h]!=uid:rs.append({"request_id":ident("rq"),"requester_id":uid,"requester_handle":S["users"][uid]["handle"],"payer_id":S["handles"][h],"payer_handle":h,"amount":x,"currency":S["currency"],"note":note,"status":"pending","payment_id":None,"created_at":instant()});S["requests"].append(rs[-1])
@@ -431,10 +491,12 @@ class App(BaseHTTPRequestHandler):
      delta=correction_delta(p,amount);deltas[p["from_user_id"]]=deltas.get(p["from_user_id"],0)-delta;deltas[p["to_user_id"]]=deltas.get(p["to_user_id"],0)+delta
     if not can_apply_deltas(deltas):return self.send(*fail("insufficient_funds",409))
     recorded=later_than(max(S["revisions"][p["payment_id"]][-1]["recorded_at"] for p,_,_,_,_ in parsed))
-    batch_id=ident("cb");extra={};revs=[]
+    extra={};revs=[]
     for p,expected,amount,effective,reason in parsed:
-     rev={"payment_id":p["payment_id"],"revision":expected+1,"amount":amount,"effective_at":effective.isoformat(),"recorded_at":recorded,"reason":reason,"correction_batch_id":batch_id};extra[p["payment_id"]]=[rev];revs.append(rev)
+     rev={"payment_id":p["payment_id"],"revision":expected+1,"amount":amount,"effective_at":effective.isoformat(),"recorded_at":recorded,"reason":reason};extra[p["payment_id"]]=[rev];revs.append(rev)
     if not historical_safe(extra):return self.send(*fail("historical_overdraft",409))
+    batch_id=ident("cb")
+    for rev in revs:rev["correction_batch_id"]=batch_id
     for p,_,amount,_,_ in parsed:apply_delta(p,correction_delta(p,amount))
     for rev in revs:S["revisions"][rev["payment_id"]].append(rev)
     return self.send(*done(ii,201,{"correction_batch_id":batch_id,"recorded_at":recorded,"revisions":revs}))
@@ -485,7 +547,8 @@ class App(BaseHTTPRequestHandler):
     if p["refund_of"]:return self.send(*fail("invalid_refund_target",422))
     if p["to_user_id"]!=uid:return self.send(*fail("forbidden",403))
     used=sum(x["amount"] for x in S["payments"] if x.get("refund_of")==p["payment_id"])
-    try:amt=nint(b.get("amount"),1,p["amount"]-used)
+    current_amount=S["revisions"][p["payment_id"]][-1]["amount"]
+    try:amt=nint(b.get("amount"),1,current_amount-used)
     except:return self.send(*fail("refund_exceeds_payment",422))
     z=move(uid,p["from_user_id"],amt,p["note"],p["visibility"],refund_of=p["payment_id"]);return self.send(*done(ii,*z) if z[0]==201 else z)
    return self.send(*fail("not_found",404))
