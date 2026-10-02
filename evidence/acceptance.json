@@ -1,0 +1,40 @@
+{
+  "tested_source_revision": "4573d5b70567b78710773267940dfe928591dc2a",
+  "scope": "Challenge acceptance, not production financial/security certification",
+  "reports": {
+    "test-gate.json": {
+      "sha256": "076ae9f76b6f12768678c6574c6432452daff6167b12c7f97ec478459a2d844b",
+      "original_workspace_path": "evidence/pocketful-observed-4573-test-gate-01/report.json"
+    },
+    "custom-adversarial.json": {
+      "sha256": "25250db377a2083ddde0ea1955fdf20352e42b661a7f9c0f14ab6e66accdca3f",
+      "original_workspace_path": "evidence/pocketful-observed-4573-adversarial-01/adversarial/adversarial-report.json"
+    },
+    "typed-identity-negative.json": {
+      "sha256": "df4991fb966322b6bebaab936d7ace681cdf645bcf15be525e1e4a3c3880073b",
+      "original_workspace_path": "evidence/pocketful-observed-4573-identity-negative-01/result/identity-type-report.json"
+    },
+    "all-folders.json": {
+      "sha256": "42b9377e3407cce516489315e66e9183e4d701cc2ec0d768aa72322882228f01",
+      "original_workspace_path": "band-work/checks/pocketful-observed-identity-4573-all-01/summary.json"
+    },
+    "stage-1-official.json": {
+      "sha256": "2faabdd31c1b774e85536276773c06d710d3bcb5a4a7f2c2618e2652d953f1f3"
+    },
+    "stage-2-official.json": {
+      "sha256": "b9bbeba673425dc2dd61c2a51b6fa62b159a07eb45b90aa14d0ac444ffdda126"
+    },
+    "stage-3-official.json": {
+      "sha256": "88d0b4f4db5bf893d9197bf74bdfafdec8772b0a00aa4d7cd92f08804078b5dc"
+    },
+    "stage-4-official.json": {
+      "sha256": "8b28f15814b1f01123e2fb4dd0e82aafd68f82a9eb440b2d2c32048c369502b0"
+    }
+  },
+  "stage_trees": {
+    "stage-1": "65003168bc7586c3c322da4b9079fbffefa51f37",
+    "stage-2": "725403f7864b55b16c6d8876dc76125f2518ed23",
+    "stage-3": "d4134f83011dcdc5db2e4e47ce5bb4e3a3a6eb6d",
+    "stage-4": "92b5ab1112777c13e2a4425157e227bd340f0230"
+  }
+}

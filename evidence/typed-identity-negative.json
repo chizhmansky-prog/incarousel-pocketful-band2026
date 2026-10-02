@@ -1,0 +1,12 @@
+{
+  "source_revision": "4573d5b70567b78710773267940dfe928591dc2a",
+  "cases": [
+    {
+      "case": "JSON number and a lookalike marker object have distinct identity",
+      "status": "PASS"
+    }
+  ],
+  "passed": 1,
+  "failed": 0,
+  "boundary": "Actual source-bound HTTP; positive original201/identical200 then typed conflict409 and atomicity; no tokens or exports saved"
+}

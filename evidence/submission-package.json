@@ -1,0 +1,58 @@
+{
+  "original_room": {
+    "bytes": 1052227,
+    "sha256": "8dc519f88603b584e962cb9f6b3ca507a599e27b4d86fdddb52aff59e034a04b",
+    "room_id": "c6632dad-8a8b-42a4-a25d-25ec6ff20dc1",
+    "scope": "full",
+    "exported_at": "2026-10-02T10:49:01.789Z",
+    "message_count": 20,
+    "senders": [
+      "analyst-pf27",
+      "engineer-pf27",
+      "lead-pf27",
+      "reviewer-pf27"
+    ],
+    "final_author_and_reviewer_present": true,
+    "last_events": [
+      {
+        "id": "c128be5f-d6cf-4b7b-ba2e-b65a61fb25c9",
+        "time": "2026-10-02T08:06:03.889Z",
+        "sender": "lead-pf27"
+      },
+      {
+        "id": "73e0770e-20c3-4406-bd2e-be2d3647a5dd",
+        "time": "2026-10-02T08:16:48.249Z",
+        "sender": "engineer-pf27"
+      },
+      {
+        "id": "84573f4b-9ed5-408d-9caf-268c28d78a80",
+        "time": "2026-10-02T08:24:23.936Z",
+        "sender": "reviewer-pf27"
+      }
+    ]
+  },
+  "offline_check": {
+    "exit_code": 0,
+    "output": "",
+    "scope": "Gates 1, 2 and generic mandate portion of gate 4; runtime evidence is separately bound in acceptance.json."
+  },
+  "credential_pattern_scan": {
+    "result": "PASS",
+    "counts": {
+      "texts": 84,
+      "decoded_payloads": 0,
+      "zip_members": 0,
+      "history_blobs": 51
+    },
+    "limits": "Known credential-pattern scan of working files, decoded text/ZIP payloads and retained Git blobs; not a comprehensive security certification."
+  },
+  "tested_source_revision": "4573d5b70567b78710773267940dfe928591dc2a",
+  "stage_trees": {
+    "stage-1": "65003168bc7586c3c322da4b9079fbffefa51f37",
+    "stage-2": "725403f7864b55b16c6d8876dc76125f2518ed23",
+    "stage-3": "d4134f83011dcdc5db2e4e47ce5bb4e3a3a6eb6d",
+    "stage-4": "92b5ab1112777c13e2a4425157e227bd340f0230"
+  },
+  "final_media_review": "PENDING_NATIVE_REPORT; not certified by this package check",
+  "submission_status": "NOT_SUBMITTED"
+}

@@ -1,0 +1,576 @@
+{
+  "schema": "pocketful.test-evidence-gate.v1",
+  "revision": "4573d5b70567b78710773267940dfe928591dc2a",
+  "checked_utc": "2026-10-02T08:18:35.371573+00:00",
+  "status": "PASS",
+  "checks": [
+    {
+      "check": "clean source",
+      "status": "PASS",
+      "detail": "Exact committed tree required"
+    },
+    {
+      "check": "official exact revision",
+      "status": "PASS",
+      "detail": {
+        "expected": "4573d5b70567b78710773267940dfe928591dc2a",
+        "observed": "4573d5b70567b78710773267940dfe928591dc2a"
+      }
+    },
+    {
+      "check": "independent exact revision",
+      "status": "PASS",
+      "detail": {
+        "expected": "4573d5b70567b78710773267940dfe928591dc2a",
+        "observed": "4573d5b70567b78710773267940dfe928591dc2a"
+      }
+    },
+    {
+      "check": "adversarial exact revision",
+      "status": "PASS",
+      "detail": {
+        "expected": "4573d5b70567b78710773267940dfe928591dc2a",
+        "observed": "4573d5b70567b78710773267940dfe928591dc2a"
+      }
+    },
+    {
+      "check": "official completed isolated stage4",
+      "status": "PASS",
+      "detail": "No incomplete or lower-stage report"
+    },
+    {
+      "check": "official stage1",
+      "status": "PASS",
+      "detail": {
+        "collected": 147,
+        "passed": 147,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_1/test_me_payments.py": {
+            "passed": 24,
+            "total": 24
+          },
+          "stage_1/test_requests_splits_feed.py": {
+            "passed": 39,
+            "total": 39
+          },
+          "stage_1/test_retries_splits_input.py": {
+            "passed": 51,
+            "total": 51
+          },
+          "stage_1/test_sample.py": {
+            "passed": 19,
+            "total": 19
+          },
+          "stage_1/test_seeded_state.py": {
+            "passed": 14,
+            "total": 14
+          }
+        }
+      }
+    },
+    {
+      "check": "official stage2",
+      "status": "PASS",
+      "detail": {
+        "collected": 35,
+        "passed": 35,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_2/test_sample.py": {
+            "passed": 10,
+            "total": 10
+          },
+          "stage_2/test_ui.py": {
+            "passed": 25,
+            "total": 25
+          }
+        }
+      }
+    },
+    {
+      "check": "official stage3",
+      "status": "PASS",
+      "detail": {
+        "collected": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_3/test_sample.py": {
+            "passed": 6,
+            "total": 6
+          }
+        }
+      }
+    },
+    {
+      "check": "official stage4",
+      "status": "PASS",
+      "detail": {
+        "collected": 5,
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_4/test_sample.py": {
+            "passed": 5,
+            "total": 5
+          }
+        }
+      }
+    },
+    {
+      "check": "official each stage folder executed",
+      "status": "PASS",
+      "detail": "Final gate requires the official --all output, not only cumulative Stage4 execution"
+    },
+    {
+      "check": "official folder1 exact completed source",
+      "status": "PASS",
+      "detail": {
+        "revision": "4573d5b70567b78710773267940dfe928591dc2a",
+        "state": "completed",
+        "highest_contiguous": 1
+      }
+    },
+    {
+      "check": "official folder1 inherited suite1",
+      "status": "PASS",
+      "detail": {
+        "collected": 147,
+        "passed": 147,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_1/test_me_payments.py": {
+            "passed": 24,
+            "total": 24
+          },
+          "stage_1/test_requests_splits_feed.py": {
+            "passed": 39,
+            "total": 39
+          },
+          "stage_1/test_retries_splits_input.py": {
+            "passed": 51,
+            "total": 51
+          },
+          "stage_1/test_sample.py": {
+            "passed": 19,
+            "total": 19
+          },
+          "stage_1/test_seeded_state.py": {
+            "passed": 14,
+            "total": 14
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder2 exact completed source",
+      "status": "PASS",
+      "detail": {
+        "revision": "4573d5b70567b78710773267940dfe928591dc2a",
+        "state": "completed",
+        "highest_contiguous": 2
+      }
+    },
+    {
+      "check": "official folder2 inherited suite1",
+      "status": "PASS",
+      "detail": {
+        "collected": 147,
+        "passed": 147,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_1/test_me_payments.py": {
+            "passed": 24,
+            "total": 24
+          },
+          "stage_1/test_requests_splits_feed.py": {
+            "passed": 39,
+            "total": 39
+          },
+          "stage_1/test_retries_splits_input.py": {
+            "passed": 51,
+            "total": 51
+          },
+          "stage_1/test_sample.py": {
+            "passed": 19,
+            "total": 19
+          },
+          "stage_1/test_seeded_state.py": {
+            "passed": 14,
+            "total": 14
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder2 inherited suite2",
+      "status": "PASS",
+      "detail": {
+        "collected": 35,
+        "passed": 35,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_2/test_sample.py": {
+            "passed": 10,
+            "total": 10
+          },
+          "stage_2/test_ui.py": {
+            "passed": 25,
+            "total": 25
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder3 exact completed source",
+      "status": "PASS",
+      "detail": {
+        "revision": "4573d5b70567b78710773267940dfe928591dc2a",
+        "state": "completed",
+        "highest_contiguous": 3
+      }
+    },
+    {
+      "check": "official folder3 inherited suite1",
+      "status": "PASS",
+      "detail": {
+        "collected": 147,
+        "passed": 147,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_1/test_me_payments.py": {
+            "passed": 24,
+            "total": 24
+          },
+          "stage_1/test_requests_splits_feed.py": {
+            "passed": 39,
+            "total": 39
+          },
+          "stage_1/test_retries_splits_input.py": {
+            "passed": 51,
+            "total": 51
+          },
+          "stage_1/test_sample.py": {
+            "passed": 19,
+            "total": 19
+          },
+          "stage_1/test_seeded_state.py": {
+            "passed": 14,
+            "total": 14
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder3 inherited suite2",
+      "status": "PASS",
+      "detail": {
+        "collected": 35,
+        "passed": 35,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_2/test_sample.py": {
+            "passed": 10,
+            "total": 10
+          },
+          "stage_2/test_ui.py": {
+            "passed": 25,
+            "total": 25
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder3 inherited suite3",
+      "status": "PASS",
+      "detail": {
+        "collected": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_3/test_sample.py": {
+            "passed": 6,
+            "total": 6
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder4 exact completed source",
+      "status": "PASS",
+      "detail": {
+        "revision": "4573d5b70567b78710773267940dfe928591dc2a",
+        "state": "completed",
+        "highest_contiguous": 4
+      }
+    },
+    {
+      "check": "official folder4 inherited suite1",
+      "status": "PASS",
+      "detail": {
+        "collected": 147,
+        "passed": 147,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_1/test_me_payments.py": {
+            "passed": 24,
+            "total": 24
+          },
+          "stage_1/test_requests_splits_feed.py": {
+            "passed": 39,
+            "total": 39
+          },
+          "stage_1/test_retries_splits_input.py": {
+            "passed": 51,
+            "total": 51
+          },
+          "stage_1/test_sample.py": {
+            "passed": 19,
+            "total": 19
+          },
+          "stage_1/test_seeded_state.py": {
+            "passed": 14,
+            "total": 14
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder4 inherited suite2",
+      "status": "PASS",
+      "detail": {
+        "collected": 35,
+        "passed": 35,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_2/test_sample.py": {
+            "passed": 10,
+            "total": 10
+          },
+          "stage_2/test_ui.py": {
+            "passed": 25,
+            "total": 25
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder4 inherited suite3",
+      "status": "PASS",
+      "detail": {
+        "collected": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_3/test_sample.py": {
+            "passed": 6,
+            "total": 6
+          }
+        }
+      }
+    },
+    {
+      "check": "official folder4 inherited suite4",
+      "status": "PASS",
+      "detail": {
+        "collected": 5,
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "deselected": 0,
+        "xfailed": 0,
+        "files": {
+          "stage_4/test_sample.py": {
+            "passed": 5,
+            "total": 5
+          }
+        }
+      }
+    },
+    {
+      "check": "independent full runtime and browser",
+      "status": "PASS",
+      "detail": {
+        "required_groups": [
+          "browser",
+          "edges",
+          "holds",
+          "http-reuse",
+          "identity-upgrade",
+          "legacy-receipts",
+          "matrix",
+          "sequential-post",
+          "temporal",
+          "terminal-actions"
+        ],
+        "observed_groups": [
+          "browser",
+          "edges",
+          "holds",
+          "http-reuse",
+          "identity-upgrade",
+          "legacy-receipts",
+          "matrix",
+          "sequential-post",
+          "temporal",
+          "terminal-actions"
+        ]
+      }
+    },
+    {
+      "check": "independent actual isolated runtime",
+      "status": "PASS",
+      "detail": "Two actual no-outbound service source bindings required"
+    },
+    {
+      "check": "independent source and assets 1",
+      "status": "PASS",
+      "detail": {
+        "container": "6f79c6235b33ee6539dc4598331ea9a36ebeb2f427ba24c44b799aa07c0e336e",
+        "files": 9
+      }
+    },
+    {
+      "check": "independent source and assets 2",
+      "status": "PASS",
+      "detail": {
+        "container": "f57d2d890610c844d5a24009e9509c954ec8e1eae39a549c419765ea6fd76def",
+        "files": 9
+      }
+    },
+    {
+      "check": "adversarial execution exact revision",
+      "status": "PASS",
+      "detail": "4573d5b70567b78710773267940dfe928591dc2a"
+    },
+    {
+      "check": "adversarial actual execution completed green",
+      "status": "PASS",
+      "detail": {
+        "status": "PASS",
+        "returncodes": [
+          0
+        ]
+      }
+    },
+    {
+      "check": "adversarial actual isolated runtime",
+      "status": "PASS",
+      "detail": "Two actual no-outbound service source bindings required"
+    },
+    {
+      "check": "adversarial source and assets 1",
+      "status": "PASS",
+      "detail": {
+        "container": "6f79c6235b33ee6539dc4598331ea9a36ebeb2f427ba24c44b799aa07c0e336e",
+        "files": 9
+      }
+    },
+    {
+      "check": "adversarial source and assets 2",
+      "status": "PASS",
+      "detail": {
+        "container": "f57d2d890610c844d5a24009e9509c954ec8e1eae39a549c419765ea6fd76def",
+        "files": 9
+      }
+    },
+    {
+      "check": "custom16 cases all pass",
+      "status": "PASS",
+      "detail": {
+        "passed": 16,
+        "failed": 0,
+        "failures": []
+      }
+    }
+  ],
+  "reports": {
+    "official": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\band-work\\checks\\pocketful-observed-identity-4573-all-01\\stage-4\\report.json",
+      "sha256": "8b28f15814b1f01123e2fb4dd0e82aafd68f82a9eb440b2d2c32048c369502b0"
+    },
+    "independent": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\evidence\\pocketful-observed-4573-independent-02\\execution.json",
+      "sha256": "12baa70f44e2d707e7f0d17042f96c7cda00e0fc27eb495af6c626954dc1c9ed"
+    },
+    "adversarial": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\evidence\\pocketful-observed-4573-adversarial-01\\adversarial\\adversarial-report.json",
+      "sha256": "25250db377a2083ddde0ea1955fdf20352e42b661a7f9c0f14ab6e66accdca3f"
+    },
+    "official_folder1": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\band-work\\checks\\pocketful-observed-identity-4573-all-01\\stage-1\\report.json",
+      "sha256": "2faabdd31c1b774e85536276773c06d710d3bcb5a4a7f2c2618e2652d953f1f3"
+    },
+    "official_folder2": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\band-work\\checks\\pocketful-observed-identity-4573-all-01\\stage-2\\report.json",
+      "sha256": "b9bbeba673425dc2dd61c2a51b6fa62b159a07eb45b90aa14d0ac444ffdda126"
+    },
+    "official_folder3": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\band-work\\checks\\pocketful-observed-identity-4573-all-01\\stage-3\\report.json",
+      "sha256": "88d0b4f4db5bf893d9197bf74bdfafdec8772b0a00aa4d7cd92f08804078b5dc"
+    },
+    "official_folder4": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\band-work\\checks\\pocketful-observed-identity-4573-all-01\\stage-4\\report.json",
+      "sha256": "8b28f15814b1f01123e2fb4dd0e82aafd68f82a9eb440b2d2c32048c369502b0"
+    },
+    "adversarial_execution": {
+      "path": "C:\\Users\\chizh\\Desktop\\Hackaton\\evidence\\pocketful-observed-4573-adversarial-01\\execution.json",
+      "sha256": "791f045ceb8a6993b0831a92658ca93aa30881388ef75f60beea2d765afc1cc8"
+    }
+  },
+  "boundary": "Test execution evidence only. Native independent review, fresh-room/repository provenance, recording, final publication and submission remain separate requirements."
+}

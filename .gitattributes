@@ -1,0 +1,4 @@
+# Keep the original console export and frozen execution evidence byte-identical.
+/room.json -text
+/evidence/*.json -text
+/custom-tests/*.py -text

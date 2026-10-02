@@ -1,0 +1,11 @@
+{
+  "currency": "EUR",
+  "minor_units": 2,
+  "users": [
+    {"id": "u_ada", "handle": "ada", "email": "ada@example.test", "password": "fixture password", "display_name": "Ada Lovelace", "balance": 10000},
+    {"id": "u_bob", "handle": "bob", "email": "bob@example.test", "password": "fixture password", "display_name": "Bob Smith", "balance": 6000},
+    {"id": "u_cy", "handle": "cy", "email": "cy@example.test", "password": "fixture password", "display_name": "Cy Chen", "balance": 4000}
+  ],
+  "payments": [],
+  "requests": []
+}

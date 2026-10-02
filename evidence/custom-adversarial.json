@@ -1,0 +1,75 @@
+{
+  "source_revision": "4573d5b70567b78710773267940dfe928591dc2a",
+  "previous_revision": "4573d5b70567b78710773267940dfe928591dc2a",
+  "seed": 27062026,
+  "cases": [
+    {
+      "case": "20 concurrent distinct refunds cannot exceed cumulative ceiling",
+      "status": "PASS"
+    },
+    {
+      "case": "16 identical concurrent refunds create exactly one immutable receipt",
+      "status": "PASS"
+    },
+    {
+      "case": "overlapping batch/batch and batch/single have one winning expected revision",
+      "status": "PASS"
+    },
+    {
+      "case": "settlement net affordability, equivalent offsets, input order and unequal-time refusal",
+      "status": "PASS"
+    },
+    {
+      "case": "batch input-order errors, exact type/range/access gates and no burned failed key",
+      "status": "PASS"
+    },
+    {
+      "case": "refund of partial capture restores money without restoring hold/lifecycle",
+      "status": "PASS"
+    },
+    {
+      "case": "request refund leaves request paid, original pay receipt intact and exact correction floor",
+      "status": "PASS"
+    },
+    {
+      "case": "eight refund/correction races preserve one consistent corrected refund ceiling",
+      "status": "PASS"
+    },
+    {
+      "case": "released hold still constrains past available funds; zero boundary and old knowledge are exact",
+      "status": "PASS"
+    },
+    {
+      "case": "settlement refund retains membership and ceiling follows corrected amount",
+      "status": "PASS"
+    },
+    {
+      "case": "historical batch refusal is atomic even when current wallets can afford change",
+      "status": "PASS"
+    },
+    {
+      "case": "shared recorded instant is atomic/inclusive and imported snapshots/receipts stay frozen",
+      "status": "PASS"
+    },
+    {
+      "case": "new write paths retain exact deep JSON decimal identity rather than rounded floats",
+      "status": "PASS"
+    },
+    {
+      "case": "real Stage3 authorization/capture/correction receipts and snapshot survive two Stage4 imports",
+      "status": "PASS"
+    },
+    {
+      "case": "malformed nested payment revision import rejects422 and preserves healthy destination",
+      "status": "PASS"
+    },
+    {
+      "case": "100 seeded random refunds/corrections agree with independent conserved integer model",
+      "status": "PASS"
+    }
+  ],
+  "passed": 16,
+  "failed": 0,
+  "spec_interpretation": "Stage3 ordinary correction fields explicitly reject invalid input422; Stage4 reuses those rules, overriding the generic Stage1 wrong-type400 default. Earlier400-oracle report retained; no changed product assertion is concealed.",
+  "scope": "actual isolated HTTP execution; no organizer implementation; no raw export/token persistence"
+}
