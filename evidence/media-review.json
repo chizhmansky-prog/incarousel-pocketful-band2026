@@ -1,0 +1,40 @@
+{
+  "schema": "pocketful.delivery-media.v1",
+  "reviewer": "Independent Codex final-media reviewer, separate from producer",
+  "tested_application_source": "4573d5b70567b78710773267940dfe928591dc2a",
+  "application_stage_trees_unchanged": true,
+  "film": {
+    "version": 4,
+    "sha256": "994ebae335beacb9fee88988dcfd2690c71346048b0211c6875fd0cea6247f2d",
+    "seconds": 148,
+    "resolution": "1920x1080",
+    "full_decode_exit": 0,
+    "narration": {
+      "provider": "ElevenLabs",
+      "voice": "Jarnathan - Confident and Versatile",
+      "model": "Eleven v4",
+      "seven_original_chapters_preserved": true,
+      "source_voice_report_sha256": "7c32a4b85474209b71f6aefd164da7cdd0d3d739fa77e40b00685570ecb1a880"
+    }
+  },
+  "pdf": {
+    "version": 6,
+    "sha256": "1791764679c97505e7a00e27d2c0fe9758f0eddfcb7471e33df72dc902310f8d",
+    "pages": 7
+  },
+  "independent_review": {
+    "report_sha256": "24cd4a77368bd7fb226c6268ea5e665e6799237327a37e9708c7a04461bec5d9",
+    "decision": "NO_BLOCKING_MEDIA_DEFECTS_OBSERVED",
+    "observed_blocking_media_defects": false,
+    "scope": "Independent audio replacement recheck, complete decode and bit-identical video stream to visually accepted film03; prior visual review report is separately bound below.",
+    "previous_three_findings": "Repaired and independently rechecked; completed results, effective caption size and safe genuine room crops.",
+    "limits": [
+      "Subjective audio listening and Gallery motion equivalence remain unverified.",
+      "No hidden-test, contest placement or financial production-readiness guarantee."
+    ],
+    "prior_visual_report_sha256": "b4756763d0f557ae8425cf63b963eeaba8cb9539a57e2540c089d3af8c0a7830"
+  },
+  "attribution": "Tony/backend; Saturn/planning; DeepResearch/source discovery and evidence review; Codex/interface and independently executed runtime checks. Final media audit is Codex, not DeepResearch.",
+  "provenance": "Real original recorded BAND handoff crops and actual verified fixture-app screenshots, held for reading; full original room export remains byte-identical.",
+  "submission_status": "Recorded separately by contest website and coordinator receipt; this record alone is not a submission receipt."
+}

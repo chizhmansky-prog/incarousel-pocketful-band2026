@@ -57,3 +57,14 @@ coordinator commits add only root documentation, the original room export and
 independent test reports; all four tested stage trees retain their exact identities.
 Final video/deck review and the contest submission receipt are separate from this
 application release.
+
+## Final media review
+
+`evidence/media-review.json` identifies the final film/PDF and the bounded
+independent Codex media assessment. The first media review found incomplete
+result shots, undersized narrative lettering and private transport regions; the
+scoped successor uses actual completed app screenshots, enlarged lettering and
+safe original BAND crops. DeepResearch remains credited for its genuine earlier
+source and evidence review. The final media reviewer is a separate Codex context.
+Subjective listening and reference-motion equivalence remain unverified. This
+media record does not assert the contest website has accepted a submission.
